@@ -1,0 +1,96 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'org.springframework.boot' version '3.4.4'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'org.vuong'
+version = '1.0-SNAPSHOT'
+
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+    withJavadocJar()
+    withSourcesJar()
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-hibernate5-jakarta'
+
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.19.1'
+    implementation 'org.modelmapper:modelmapper:3.2.0'
+
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+// Disable Spring Boot fat jar and enable plain jar
+bootJar {
+    enabled = false
+}
+
+jar {
+    enabled = true
+}
+
+// ✅ Maven publishing configuration
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+
+            pom {
+                name = 'Auto REST API Library'
+                description = 'Automatically exposes REST APIs for JPA entities'
+                url = 'https://github.com/vuongle98/simple-rest'
+                licenses {
+                    license {
+                        name = 'MIT License'
+                        url = 'https://opensource.org/licenses/MIT'
+                    }
+                }
+                developers {
+                    developer {
+                        id = 'yourid'
+                        name = 'Your Name'
+                        email = 'you@example.com'
+                    }
+                }
+                scm {
+                    url = 'https://github.com/vuongle98/simple-rest'
+                    connection = 'scm:git:https://github.com/vuongle98/simple-rest'
+                    developerConnection = 'scm:git:ssh://git@github.com:vuongle98/simple-rest'
+                }
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/vuongle98/simple-rest")
+            credentials {
+                username = project.findProperty("gpr.user") ?: System.getenv("USERNAME")
+                password = project.findProperty("gpr.key") ?: System.getenv("TOKEN")
+            }
+        }
+    }
+}
