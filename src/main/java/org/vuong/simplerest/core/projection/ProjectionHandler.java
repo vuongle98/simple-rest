@@ -16,7 +16,6 @@ import java.time.LocalTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
-
 @Component
 public class ProjectionHandler {
     private static final Logger logger = LoggerFactory.getLogger(ProjectionHandler.class);

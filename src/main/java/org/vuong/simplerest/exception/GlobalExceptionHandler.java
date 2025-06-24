@@ -14,5 +14,8 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ex.getMessage());
     }
 
-    // You can add more handlers here
+    @ExceptionHandler(DataNotFoundException.class)
+    public ResponseEntity<String> handleDataNotFoundException(DataNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
+    }
 }

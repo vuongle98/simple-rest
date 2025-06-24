@@ -7,10 +7,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.vuong.simplerest.core.domain.repository.GenericRepository;
-import org.vuong.simplerest.exception.DataNotFoundException;
 import org.vuong.simplerest.core.service.GenericRestService;
 import org.vuong.simplerest.dto.ApiRequest;
 import org.vuong.simplerest.dto.ApiResponse;
+import org.vuong.simplerest.exception.DataNotFoundException;
 import org.vuong.simplerest.util.RequestValidator;
 
 import java.util.List;

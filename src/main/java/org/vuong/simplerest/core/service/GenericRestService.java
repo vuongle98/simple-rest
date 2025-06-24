@@ -16,9 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.vuong.simplerest.core.domain.repository.GenericRepository;
 import org.vuong.simplerest.core.domain.specification.SpecificationBuilder;
-import org.vuong.simplerest.exception.DataNotFoundException;
 import org.vuong.simplerest.core.projection.ProjectionHandler;
 import org.vuong.simplerest.core.projection.ProjectionRegistry;
+import org.vuong.simplerest.exception.DataNotFoundException;
 import org.vuong.simplerest.util.ModelMappingUtil;
 
 import java.lang.reflect.Field;
