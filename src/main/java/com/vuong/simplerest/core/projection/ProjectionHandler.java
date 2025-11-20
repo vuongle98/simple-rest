@@ -16,11 +16,23 @@ import java.time.LocalTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Component for handling entity projections to different data transfer objects or interfaces.
+ * Supports projection to classes, interfaces, and collections with cycle detection and caching.
+ * Used in the Simple REST module to transform JPA entities into lightweight projection objects.
+ */
 @Component
 public class ProjectionHandler {
     private static final Logger logger = LoggerFactory.getLogger(ProjectionHandler.class);
     private final Map<ProjectionKey, Object> projectionCache = new ConcurrentHashMap<>();
 
+    /**
+     * Projects an entity to a map containing only the specified fields.
+     * @param entity the entity to project
+     * @param fields the list of field names to include in the projection
+     * @param <T> the entity type
+     * @return a map with field names as keys and their values
+     */
     public <T> Map<String, Object> project(T entity, List<String> fields) {
         Map<String, Object> result = new HashMap<>();
 
@@ -37,12 +49,29 @@ public class ProjectionHandler {
         return result;
     }
 
+    /**
+     * Projects an entity to the specified projection class.
+     * @param entity the entity to project
+     * @param projectionClass the class or interface to project to
+     * @param <T> the entity type
+     * @param <D> the projection type
+     * @return the projected object, or null if projection fails
+     */
     public <T, D> D project(T entity, Class<D> projectionClass) {
         // Use IdentityHashMap instead of HashSet for identity-based equality
         Set<Object> visited = Collections.newSetFromMap(new IdentityHashMap<>());
         return project(entity, projectionClass, visited);
     }
 
+    /**
+     * Internal projection method with cycle detection support.
+     * @param entity the entity to project
+     * @param projectionClass the class or interface to project to
+     * @param visited set of already visited entities to prevent cycles
+     * @param <T> the entity type
+     * @param <D> the projection type
+     * @return the projected object, or null if projection fails
+     */
     public <T, D> D project(T entity, Class<D> projectionClass, Set<Object> visited) {
         if (entity == null) {
             logger.warn("Cannot project null entity");

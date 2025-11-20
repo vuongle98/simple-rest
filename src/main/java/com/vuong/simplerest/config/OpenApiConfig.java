@@ -11,6 +11,11 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * Configuration class for OpenAPI (Swagger) documentation.
+ * Provides an OpenAPI bean with customizable info, security, and contact details
+ * based on application properties.
+ */
 @Configuration
 public class OpenApiConfig {
 
@@ -35,6 +40,12 @@ public class OpenApiConfig {
     @Value("${app.openapi.license.url:}")
     private String licenseUrl;
 
+    /**
+     * Creates an OpenAPI bean for Swagger documentation.
+     * Configures API info, contact, license, and basic authentication security scheme.
+     * Values are injected from application properties with defaults.
+     * @return configured OpenAPI instance
+     */
     @Bean
     @ConditionalOnMissingBean(OpenAPI.class)  // Prevents duplicate OpenAPI beans
     public OpenAPI customOpenAPI() {

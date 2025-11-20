@@ -28,6 +28,11 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
+/**
+ * Service class providing CRUD operations for JPA entities in the Simple REST module.
+ * Handles entity retrieval, creation, update, deletion, projections, and relationships.
+ * Supports filtering, pagination, and dynamic projections.
+ */
 @Service
 @Transactional
 public class SimpleRestService {
@@ -39,6 +44,13 @@ public class SimpleRestService {
     private final ApplicationContext applicationContext;
     private final Map<String, GenericRepository<?, ?>> repositoryMap = new ConcurrentHashMap<>();
 
+    /**
+     * Constructs a SimpleRestService with the required dependencies.
+     * @param projectionHandler the handler for entity projections
+     * @param projectionRegistry the registry for projection mappings
+     * @param objectMapper the ObjectMapper for JSON serialization/deserialization
+     * @param applicationContext the Spring application context
+     */
     public SimpleRestService(
             ProjectionHandler projectionHandler,
             ProjectionRegistry projectionRegistry,
@@ -61,6 +73,14 @@ public class SimpleRestService {
         }
     }
 
+    /**
+     * Retrieves the GenericRepository for the specified entity name.
+     * @param <T> the entity type
+     * @param <ID> the ID type
+     * @param entity the entity name in kebab-case
+     * @return the repository instance for the entity
+     * @throws IllegalArgumentException if no repository is found for the entity
+     */
     @SuppressWarnings("unchecked")
     public <T, ID> GenericRepository<T, ID> getJpaRepository(String entity) {
         GenericRepository<?, ?> repo = repositoryMap.get(entity);
@@ -70,37 +90,105 @@ public class SimpleRestService {
         return (GenericRepository<T, ID>) repo;
     }
 
+    /**
+     * Gets the entity class from the repository.
+     * @param <T> the entity type
+     * @param <ID> the ID type
+     * @param repository the repository instance
+     * @return the entity class
+     */
     public <T, ID> Class<T> getEntityClass(GenericRepository<T, ID> repository) {
         return repository.getEntityClass();
     }
 
+    /**
+     * Finds all entities with pagination.
+     * @param <T> the entity type
+     * @param <ID> the ID type
+     * @param repository the repository instance
+     * @param pageable the pagination and sorting information
+     * @return a page of entities
+     */
     public <T, ID> Page<T> findAll(GenericRepository<T, ID> repository, Pageable pageable) {
         Class<T> entityClass = repository.getEntityClass();
         return repository.findAll(pageable);
     }
 
+    /**
+     * Finds all entities with pagination and projection.
+     * @param <T> the entity type
+     * @param <ID> the ID type
+     * @param <D> the projection type
+     * @param repository the repository instance
+     * @param pageable the pagination and sorting information
+     * @param projectionClass the projection class
+     * @return a page of projected entities
+     */
     public <T, ID, D> Page<D> findAll(GenericRepository<T, ID> repository, Pageable pageable, Class<D> projectionClass) {
         Page<T> page = repository.findAll(pageable);
         return page.map(entity -> projectWithNested(entity, projectionClass));
     }
 
+    /**
+     * Retrieves an entity by its ID.
+     * @param repository the repository for the entity
+     * @param id the entity ID
+     * @param <T> the entity type
+     * @param <ID> the ID type
+     * @return the entity
+     * @throws EntityNotFoundException if the entity is not found
+     */
     public <T, ID> T getById(GenericRepository<T, ID> repository, ID id) {
         return findById(repository, id).orElseThrow(() -> new EntityNotFoundException("Not found entity with id: " + id));
     }
 
+    /**
+     * Retrieves an entity by its ID with projection.
+     * @param <T> the entity type
+     * @param <ID> the ID type
+     * @param <D> the projection type
+     * @param repository the repository for the entity
+     * @param id the entity ID
+     * @param projectionClass the projection class
+     * @return the projected entity
+     * @throws EntityNotFoundException if the entity is not found
+     */
     public <T, ID, D> D getById(GenericRepository<T, ID> repository, ID id, Class<D> projectionClass) {
         T entity = findById(repository, id).orElseThrow(() -> new EntityNotFoundException("Not found entity with id: " + id));
         return projectWithNested(entity, projectionClass);
     }
 
+    /**
+     * Finds an entity by its ID.
+     * @param <T> the entity type
+     * @param <ID> the ID type
+     * @param repository the repository instance
+     * @param id the entity ID
+     * @return an Optional containing the entity if found, empty otherwise
+     */
     public <T, ID> Optional<T> findById(GenericRepository<T, ID> repository, ID id) {
         return repository.findById(id);
     }
 
+    /**
+     * Saves an entity.
+     * @param <T> the entity type
+     * @param <ID> the ID type
+     * @param repository the repository instance
+     * @param entity the entity to save
+     * @return the saved entity
+     */
     public <T, ID> T save(GenericRepository<T, ID> repository, T entity) {
         return repository.save(entity);
     }
 
+    /**
+     * Deletes an entity by its ID.
+     * @param <T> the entity type
+     * @param <ID> the ID type
+     * @param repository the repository instance
+     * @param id the entity ID
+     */
     public <T, ID> void delete(GenericRepository<T, ID> repository, ID id) {
         Class<T> entityClass = repository.getEntityClass();
         logger.debug("Deleting entity of type: {} with ID: {}", entityClass.getSimpleName(), id);
@@ -110,12 +198,28 @@ public class SimpleRestService {
         logger.info("Successfully deleted entity of type: {} with ID: {}", entityClass.getSimpleName(), id);
     }
 
+    /**
+     * Projects a list of entities to a list of maps with specified fields.
+     * @param <T> the entity type
+     * @param data the list of entities
+     * @param fields the list of field names to include
+     * @return a list of maps containing the projected data
+     */
     public <T> List<Map<String, Object>> getProjectedData(List<T> data, List<String> fields) {
         return data.stream()
                 .map(entity -> projectionHandler.project(entity, fields))
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Finds all entities with filters, pagination, and sorting.
+     * @param <T> the entity type
+     * @param repository the specification executor repository
+     * @param filters the filter map
+     * @param pageable the pagination and sorting information
+     * @param entityClass the entity class
+     * @return a page of entities matching the filters
+     */
     public <T> Page<T> findAll(
             JpaSpecificationExecutor<T> repository,
             Map<String, String> filters,
@@ -126,6 +230,17 @@ public class SimpleRestService {
         return repository.findAll(spec, pageable);
     }
 
+    /**
+     * Finds all entities with filters, pagination, sorting, and projection.
+     * @param <T> the entity type
+     * @param <D> the projection type
+     * @param repository the specification executor repository
+     * @param filters the filter map
+     * @param pageable the pagination and sorting information
+     * @param entityClass the entity class
+     * @param projectionClass the projection class
+     * @return a page of projected entities matching the filters
+     */
     public <T, D> Page<D> findAll(
             JpaSpecificationExecutor<T> repository,
             Map<String, String> filters,
@@ -139,10 +254,30 @@ public class SimpleRestService {
         return page.map(entity -> projectWithNested(entity, projectionClass));
     }
 
+    /**
+     * Projects an entity to a specified projection class.
+     * @param <T> the entity type
+     * @param <D> the projection type
+     * @param entity the entity to project
+     * @param projectionClass the projection class
+     * @return the projected entity
+     */
     public <T, D> D project(T entity, Class<D> projectionClass) {
         return projectWithNested(entity, projectionClass);
     }
 
+    /**
+     * Creates a new entity from the provided data.
+     * Handles relationships and projections.
+     * @param repository the repository for the entity
+     * @param createReq the creation request data as a map
+     * @param projectionClass the projection class for the response, or null for full entity
+     * @param <T> the entity type
+     * @param <ID> the ID type
+     * @param <D> the projection type
+     * @return the created entity or its projection
+     * @throws Exception if mapping, relationship handling, or saving fails
+     */
     @SuppressWarnings("unchecked")
     public <T, ID, D> D create(GenericRepository<T, ID> repository, Map<String, Object> createReq, Class<D> projectionClass) throws Exception {
         Class<T> entityClass = repository.getEntityClass();
@@ -191,6 +326,19 @@ public class SimpleRestService {
         return String.valueOf(System.identityHashCode(entity));
     }
 
+    /**
+     * Updates an existing entity with the provided data.
+     * Handles relationships and projections.
+     * @param <T> the entity type
+     * @param <ID> the ID type
+     * @param <D> the projection type
+     * @param repository the repository for the entity
+     * @param id the entity ID
+     * @param updateReq the update request data as a map
+     * @param projectionClass the projection class for the response, or null for full entity
+     * @return the updated entity or its projection
+     * @throws Exception if mapping, relationship handling, or saving fails
+     */
     @SuppressWarnings("unchecked")
     public <T, ID, D> D update(GenericRepository<T, ID> repository, ID id, Map<String, Object> updateReq, Class<D> projectionClass) throws Exception {
         Class<T> entityClass = repository.getEntityClass();
@@ -215,6 +363,14 @@ public class SimpleRestService {
         return (D) savedEntity;
     }
 
+    /**
+     * Resolves the projection class for the given projection name and entity class.
+     * @param <T> the entity type
+     * @param <D> the projection type
+     * @param projection the projection name or null
+     * @param entityClass the entity class
+     * @return the projection class, or null if not found
+     */
     @SuppressWarnings("unchecked")
     public <T, D> Class<D> resolveProjectionClass(String projection, Class<T> entityClass) {
         if (projection != null && projectionRegistry.hasProjection(projection)) {

@@ -11,9 +11,20 @@ import org.springframework.boot.autoconfigure.jackson.Jackson2ObjectMapperBuilde
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * Configuration class for Jackson ObjectMapper customization.
+ * Provides beans for ObjectMapper and Jackson2ObjectMapperBuilderCustomizer
+ * with Hibernate support, JavaTime handling, and additional serialization features.
+ */
 @Configuration
 public class JacksonConfig {
 
+    /**
+     * Creates a custom ObjectMapper bean with Hibernate and JavaTime support.
+     * Configures serialization to exclude null values, handle lazy loading,
+     * and disable timestamps for dates.
+     * @return configured ObjectMapper instance
+     */
     @Bean
     @ConditionalOnMissingBean(ObjectMapper.class)  // Prevents duplicate ObjectMapper beans
     public ObjectMapper objectMapper() {
@@ -31,6 +42,11 @@ public class JacksonConfig {
         return objectMapper;
     }
 
+    /**
+     * Creates a Jackson2ObjectMapperBuilderCustomizer to customize the default ObjectMapper builder.
+     * Disables date timestamps and registers JavaTime module.
+     * @return customizer instance
+     */
     @Bean
     @ConditionalOnMissingBean(Jackson2ObjectMapperBuilderCustomizer.class)  // Prevents duplicate customizer beans
     Jackson2ObjectMapperBuilderCustomizer jsonCustomizer() {

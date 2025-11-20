@@ -19,6 +19,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Registry for managing projection interfaces annotated with @ProjectionDefinition.
+ * Scans specified base packages to discover and register projections for entity types.
+ * Provides methods to query available projections and their mappings.
+ */
 @Component
 public class ProjectionRegistry {
     private static final Logger logger = LoggerFactory.getLogger(ProjectionRegistry.class);
@@ -30,11 +35,18 @@ public class ProjectionRegistry {
     @Value("${app.base-packages:com.vuog.core.module}")
     private String[] basePackages;
 
+    /**
+     * Constructs a new ProjectionRegistry with default resource resolver and metadata reader factory.
+     */
     public ProjectionRegistry() {
         this.resourceResolver = new PathMatchingResourcePatternResolver();
         this.metadataReaderFactory = new SimpleMetadataReaderFactory();
     }
 
+    /**
+     * Initializes the projection registry after construction.
+     * This method is called automatically by Spring after bean creation.
+     */
     @PostConstruct
     public void init() {
         logger.info("Initializing ProjectionRegistry with base packages: {}", Arrays.toString(basePackages));
@@ -42,6 +54,9 @@ public class ProjectionRegistry {
         logRegistryState();
     }
 
+    /**
+     * Manually initializes or reinitializes the projection registry by scanning for projection interfaces.
+     */
     public void initialize() {
         try {
             for (String basePackage : basePackages) {
@@ -145,10 +160,20 @@ public class ProjectionRegistry {
         }
     }
 
+    /**
+     * Checks if a projection with the given name exists.
+     * @param projectionName the name of the projection
+     * @return true if the projection exists, false otherwise
+     */
     public boolean hasProjection(String projectionName) {
         return projectionMap.containsKey(projectionName);
     }
 
+    /**
+     * Retrieves the projection class for the given projection name.
+     * @param projectionName the name of the projection
+     * @return the projection class, or null if not found
+     */
     public Class<?> getProjectionClass(String projectionName) {
         Class<?> projectionClass = projectionMap.get(projectionName);
         if (projectionClass == null) {
@@ -157,10 +182,20 @@ public class ProjectionRegistry {
         return projectionClass;
     }
 
+    /**
+     * Checks if there is a registered projection for the given entity type.
+     * @param entityType the entity class
+     * @return true if a projection exists for the entity, false otherwise
+     */
     public boolean hasProjectionForEntity(Class<?> entityType) {
         return entityProjectionMap.containsKey(entityType);
     }
 
+    /**
+     * Retrieves the projection class for the given entity type.
+     * @param entityType the entity class
+     * @return the projection class, or null if not found
+     */
     public Class<?> getProjectionForEntity(Class<?> entityType) {
         Class<?> projectionClass = entityProjectionMap.get(entityType);
         if (projectionClass == null) {
@@ -169,6 +204,11 @@ public class ProjectionRegistry {
         return projectionClass;
     }
 
+    /**
+     * Retrieves a map of getter methods for the given projection name.
+     * @param projectionName the name of the projection
+     * @return a map of method names to Method objects, or null if projection not found
+     */
     public Map<String, Method> getProjectionMethods(String projectionName) {
         Class<?> projectionClass = getProjectionClass(projectionName);
         if (projectionClass == null) {
@@ -184,10 +224,18 @@ public class ProjectionRegistry {
         return methods;
     }
 
+    /**
+     * Returns the set of all available projection names.
+     * @return set of projection names
+     */
     public Set<String> getAvailableProjections() {
         return projectionMap.keySet();
     }
 
+    /**
+     * Returns the set of all entity types that have registered projections.
+     * @return set of entity classes
+     */
     public Set<Class<?>> getAvailableEntityTypes() {
         return entityProjectionMap.keySet();
     }

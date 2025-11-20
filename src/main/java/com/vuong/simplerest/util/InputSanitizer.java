@@ -6,6 +6,11 @@ import org.springframework.util.StringUtils;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+/**
+ * Component for sanitizing user input to prevent security vulnerabilities.
+ * Handles SQL injection, XSS, path traversal, and removes control characters.
+ * Also provides safe logging by masking sensitive information.
+ */
 @Component
 public class InputSanitizer {
 
@@ -22,6 +27,11 @@ public class InputSanitizer {
         "(\\.\\.|/\\\\|\\\\\\.\\.|%2e%2e|%2f|%5c)"
     );
 
+    /**
+     * Sanitizes a string by trimming, removing null bytes, and control characters.
+     * @param input the input string to sanitize
+     * @return the sanitized string, or null if input is null
+     */
     public String sanitizeString(String input) {
         if (!StringUtils.hasText(input)) {
             return input;
@@ -38,6 +48,11 @@ public class InputSanitizer {
         return sanitized;
     }
 
+    /**
+     * Sanitizes all values in a filters map by applying string sanitization.
+     * @param filters the map of filters to sanitize
+     * @return the sanitized filters map, or null if input is null
+     */
     public Map<String, String> sanitizeFilters(Map<String, String> filters) {
         if (filters == null) {
             return null;
@@ -47,6 +62,12 @@ public class InputSanitizer {
         return filters;
     }
 
+    /**
+     * Checks if the input string contains potentially malicious content.
+     * Detects SQL injection, XSS, and path traversal patterns.
+     * @param input the string to check
+     * @return true if malicious content is detected, false otherwise
+     */
     public boolean containsMaliciousContent(String input) {
         if (!StringUtils.hasText(input)) {
             return false;
@@ -57,6 +78,12 @@ public class InputSanitizer {
                PATH_TRAVERSAL_PATTERN.matcher(input).find();
     }
 
+    /**
+     * Sanitizes a string for safe logging by limiting length and masking sensitive information.
+     * Masks passwords, tokens, secrets, and keys.
+     * @param input the string to sanitize for logging
+     * @return the sanitized string for logging, or null if input is null
+     */
     public String sanitizeForLogging(String input) {
         if (!StringUtils.hasText(input)) {
             return input;

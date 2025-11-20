@@ -12,6 +12,11 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.util.Map;
 
+/**
+ * Filter for sanitizing HTTP request parameters to prevent security vulnerabilities.
+ * Uses InputSanitizer to clean query parameters and request attributes.
+ * Executes after LoggingFilter to ensure request context is available.
+ */
 @Component
 @Order(1)
 public class RequestSanitizationFilter implements Filter {

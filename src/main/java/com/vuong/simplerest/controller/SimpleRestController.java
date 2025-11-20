@@ -14,6 +14,11 @@ import com.vuong.simplerest.util.RequestValidator;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * REST controller for generic CRUD operations on JPA entities.
+ * Handles GET, POST, PUT, DELETE requests for entities with support for projections,
+ * filtering, pagination, and input validation/sanitization.
+ */
 @RestController
 @RequestMapping("/api/{entity}")
 @EnableSpringDataWebSupport(pageSerializationMode = EnableSpringDataWebSupport.PageSerializationMode.VIA_DTO)
@@ -23,6 +28,12 @@ public class SimpleRestController<T, ID> {
     private final RequestValidator requestValidator;
     private final InputSanitizer inputSanitizer;
 
+    /**
+     * Constructs a SimpleRestController with the required dependencies.
+     * @param simpleRestService the service for REST operations
+     * @param requestValidator the validator for request parameters
+     * @param inputSanitizer the sanitizer for input data
+     */
     public SimpleRestController(
             SimpleRestService simpleRestService,
             RequestValidator requestValidator,
@@ -32,6 +43,15 @@ public class SimpleRestController<T, ID> {
         this.inputSanitizer = inputSanitizer;
     }
 
+    /**
+     * Retrieves a paginated list of entities with optional filtering and projection.
+     * @param entity the entity name (path variable)
+     * @param projection the projection name (optional query param)
+     * @param requestParams the request parameters for filtering (query params)
+     * @param pageable pagination and sorting information
+     * @param <D> the response type (entity or projection)
+     * @return ResponseEntity with the page of entities
+     */
     @GetMapping
     @SuppressWarnings("unchecked")
     public <D> ResponseEntity<Page<D>> getAll(
@@ -75,6 +95,14 @@ public class SimpleRestController<T, ID> {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * Retrieves an entity by its ID with optional projection.
+     * @param entity the entity name (path variable)
+     * @param id the entity ID (path variable)
+     * @param projection the projection name (optional query param)
+     * @param <D> the response type (entity or projection)
+     * @return ResponseEntity with the entity or projection
+     */
     @GetMapping("/{id}")
     @SuppressWarnings("unchecked")
     public <D> ResponseEntity<D> getById(
@@ -97,6 +125,15 @@ public class SimpleRestController<T, ID> {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * Creates a new entity with optional projection.
+     * @param entityName the entity name (path variable)
+     * @param createReq the request body containing entity data
+     * @param projection the projection name (optional query param)
+     * @param <D> the response type (entity or projection)
+     * @return ResponseEntity with the created entity or projection
+     * @throws Exception if creation fails
+     */
     @PostMapping
     public <D> ResponseEntity<D> create(
             @PathVariable("entity") String entityName,
@@ -115,6 +152,16 @@ public class SimpleRestController<T, ID> {
         return ResponseEntity.status(HttpStatus.CREATED).body(result);
     }
 
+    /**
+     * Updates an existing entity with optional projection.
+     * @param entity the entity name (path variable)
+     * @param id the entity ID (path variable)
+     * @param updateReq the request body containing update data
+     * @param projection the projection name (optional query param)
+     * @param <D> the response type (entity or projection)
+     * @return ResponseEntity with the updated entity or projection
+     * @throws Exception if update fails
+     */
     @PutMapping("/{id}")
     public <D> ResponseEntity<D> update(
             @PathVariable("entity") String entity,
@@ -135,6 +182,12 @@ public class SimpleRestController<T, ID> {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * Deletes an entity by its ID.
+     * @param entity the entity name (path variable)
+     * @param id the entity ID (path variable)
+     * @return ResponseEntity with no content (204)
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(
             @PathVariable("entity") String entity,

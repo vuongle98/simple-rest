@@ -12,6 +12,11 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.UUID;
 
+/**
+ * Filter for adding structured logging context to HTTP requests.
+ * Generates request and correlation IDs, and adds request metadata to MDC for logging.
+ * Executes before other filters to ensure logging context is available throughout the request.
+ */
 @Component
 @Order(0) // Execute before other filters
 public class LoggingFilter extends OncePerRequestFilter {
@@ -25,6 +30,15 @@ public class LoggingFilter extends OncePerRequestFilter {
     private static final String USER_AGENT_KEY = "userAgent";
     private static final String REMOTE_ADDR_KEY = "remoteAddr";
 
+    /**
+     * Processes the HTTP request to add logging context.
+     * Generates request and correlation IDs if not present, and adds request metadata to MDC.
+     * @param request the HTTP request
+     * @param response the HTTP response
+     * @param filterChain the filter chain
+     * @throws ServletException if a servlet error occurs
+     * @throws IOException if an I/O error occurs
+     */
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
