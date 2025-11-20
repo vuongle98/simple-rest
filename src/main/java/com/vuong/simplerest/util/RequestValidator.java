@@ -47,12 +47,28 @@ public class RequestValidator {
         if (pageable == null) {
             errors.add("Pageable cannot be null");
         } else {
-            if (pageable.getPageNumber() < 0) {
-                errors.add("Page number cannot be negative");
+            try {
+                if (pageable.getPageNumber() < 0) {
+                    errors.add("Page number cannot be negative");
+                }
+                if (pageable.getPageSize() <= 0) {
+                    errors.add("Page size must be positive");
+                }
+            } catch (IllegalArgumentException e) {
+                // If accessing pageable properties throws exception, add generic error
+                errors.add("Invalid pageable parameters: " + e.getMessage());
             }
-            if (pageable.getPageSize() <= 0) {
-                errors.add("Page size must be positive");
-            }
+        }
+        return errors;
+    }
+
+    public List<String> validatePageable(int page, int size) {
+        List<String> errors = new ArrayList<>();
+        if (page < 0) {
+            errors.add("Page number cannot be negative");
+        }
+        if (size <= 0) {
+            errors.add("Page size must be positive");
         }
         return errors;
     }

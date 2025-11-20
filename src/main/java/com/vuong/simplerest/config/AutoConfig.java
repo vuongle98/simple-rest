@@ -1,11 +1,13 @@
 package com.vuong.simplerest.config;
 
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
 import com.vuong.simplerest.core.projection.ProjectionDefinition;
 import com.vuong.simplerest.core.projection.ProjectionHandler;
 
 @Configuration
+@ComponentScan(basePackages = "com.vuong.simplerest")
 public class AutoConfig {
 
     @Bean

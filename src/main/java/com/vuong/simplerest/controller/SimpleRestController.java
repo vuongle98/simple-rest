@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import com.vuong.simplerest.core.domain.repository.GenericRepository;
 import com.vuong.simplerest.core.service.SimpleRestService;
+import com.vuong.simplerest.util.InputSanitizer;
 import com.vuong.simplerest.util.RequestValidator;
 
 import java.util.List;
@@ -20,12 +21,15 @@ public class SimpleRestController<T, ID> {
 
     private final SimpleRestService simpleRestService;
     private final RequestValidator requestValidator;
+    private final InputSanitizer inputSanitizer;
 
     public SimpleRestController(
             SimpleRestService simpleRestService,
-            RequestValidator requestValidator) {
+            RequestValidator requestValidator,
+            InputSanitizer inputSanitizer) {
         this.simpleRestService = simpleRestService;
         this.requestValidator = requestValidator;
+        this.inputSanitizer = inputSanitizer;
     }
 
     @GetMapping
@@ -44,6 +48,9 @@ public class SimpleRestController<T, ID> {
         filters.remove("page");
         filters.remove("size");
         filters.remove("sort");
+
+        // Sanitize filters
+        filters = inputSanitizer.sanitizeFilters(filters);
 
         if (!validationErrors.isEmpty()) {
             throw new IllegalArgumentException(String.join(", ", validationErrors));

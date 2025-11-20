@@ -19,7 +19,7 @@ import com.vuong.simplerest.core.domain.repository.GenericRepository;
 import com.vuong.simplerest.core.domain.specification.SpecificationBuilder;
 import com.vuong.simplerest.core.projection.ProjectionHandler;
 import com.vuong.simplerest.core.projection.ProjectionRegistry;
-import com.vuong.simplerest.exception.DataNotFoundException;
+import jakarta.persistence.EntityNotFoundException;
 import com.vuong.simplerest.util.ModelMappingUtil;
 
 import java.lang.reflect.Field;
@@ -57,7 +57,7 @@ public class SimpleRestService {
             Class<?> entityClass = repo.getEntityClass();
             String entityName = toKebabCase(entityClass.getSimpleName());
             repositoryMap.put(entityName, repo);
-            logger.info("Registered repository for entity: {} -> {}", entityName, repo.getClass().getSimpleName());
+            logger.info("Registered repository for entity: {} -> {}. Entity class: {}", entityName, repo.getClass().getSimpleName(), entityClass.getName());
         }
     }
 
@@ -65,7 +65,7 @@ public class SimpleRestService {
     public <T, ID> GenericRepository<T, ID> getJpaRepository(String entity) {
         GenericRepository<?, ?> repo = repositoryMap.get(entity);
         if (repo == null) {
-            throw new DataNotFoundException("No repository found for entity: " + entity);
+            throw new IllegalArgumentException("No repository found for entity: " + entity);
         }
         return (GenericRepository<T, ID>) repo;
     }
@@ -75,6 +75,7 @@ public class SimpleRestService {
     }
 
     public <T, ID> Page<T> findAll(GenericRepository<T, ID> repository, Pageable pageable) {
+        Class<T> entityClass = repository.getEntityClass();
         return repository.findAll(pageable);
     }
 
@@ -84,11 +85,11 @@ public class SimpleRestService {
     }
 
     public <T, ID> T getById(GenericRepository<T, ID> repository, ID id) {
-        return findById(repository, id).orElseThrow(() -> new DataNotFoundException("Not found entity with id: " + id));
+        return findById(repository, id).orElseThrow(() -> new EntityNotFoundException("Not found entity with id: " + id));
     }
 
     public <T, ID, D> D getById(GenericRepository<T, ID> repository, ID id, Class<D> projectionClass) {
-        T entity = findById(repository, id).orElseThrow(() -> new DataNotFoundException("Not found entity with id: " + id));
+        T entity = findById(repository, id).orElseThrow(() -> new EntityNotFoundException("Not found entity with id: " + id));
         return projectWithNested(entity, projectionClass);
     }
 
@@ -101,7 +102,12 @@ public class SimpleRestService {
     }
 
     public <T, ID> void delete(GenericRepository<T, ID> repository, ID id) {
+        Class<T> entityClass = repository.getEntityClass();
+        logger.debug("Deleting entity of type: {} with ID: {}", entityClass.getSimpleName(), id);
+
         repository.deleteById(id);
+
+        logger.info("Successfully deleted entity of type: {} with ID: {}", entityClass.getSimpleName(), id);
     }
 
     public <T> List<Map<String, Object>> getProjectedData(List<T> data, List<String> fields) {
@@ -140,9 +146,15 @@ public class SimpleRestService {
     @SuppressWarnings("unchecked")
     public <T, ID, D> D create(GenericRepository<T, ID> repository, Map<String, Object> createReq, Class<D> projectionClass) throws Exception {
         Class<T> entityClass = repository.getEntityClass();
+        logger.debug("Creating entity of type: {} with projection: {}", entityClass.getSimpleName(),
+                    projectionClass != null ? projectionClass.getSimpleName() : "none");
+
         T entity = ModelMappingUtil.map(createReq, entityClass);
         handleRelationships(entity, createReq, entityClass);
         T savedEntity = save(repository, entity);
+
+        logger.info("Successfully created entity of type: {} with ID: {}", entityClass.getSimpleName(),
+                   getEntityId(savedEntity));
 
         if (projectionClass != null) {
             try {
@@ -160,12 +172,37 @@ public class SimpleRestService {
         return (D) savedEntity;
     }
 
+    private String getEntityId(Object entity) {
+        if (entity == null) {
+            return "null";
+        }
+
+        try {
+            Field idField = findIdField(entity.getClass());
+            if (idField != null) {
+                idField.setAccessible(true);
+                Object id = idField.get(entity);
+                return id != null ? id.toString() : String.valueOf(System.identityHashCode(entity));
+            }
+        } catch (Exception e) {
+            // Ignore and fall back to identity hash code
+        }
+
+        return String.valueOf(System.identityHashCode(entity));
+    }
+
     @SuppressWarnings("unchecked")
     public <T, ID, D> D update(GenericRepository<T, ID> repository, ID id, Map<String, Object> updateReq, Class<D> projectionClass) throws Exception {
+        Class<T> entityClass = repository.getEntityClass();
+        logger.debug("Updating entity of type: {} with ID: {} and projection: {}", entityClass.getSimpleName(), id,
+                    projectionClass != null ? projectionClass.getSimpleName() : "none");
+
         T existingEntity = getById(repository, id);
         objectMapper.updateValue(existingEntity, updateReq);
         handleRelationships(existingEntity, updateReq, repository.getEntityClass());
         T savedEntity = save(repository, existingEntity);
+
+        logger.info("Successfully updated entity of type: {} with ID: {}", entityClass.getSimpleName(), id);
 
         if (projectionClass != null) {
             try {
