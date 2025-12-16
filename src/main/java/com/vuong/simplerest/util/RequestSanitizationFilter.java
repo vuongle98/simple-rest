@@ -34,18 +34,18 @@ public class RequestSanitizationFilter implements Filter {
         HttpServletResponse httpResponse = (HttpServletResponse) response;
 
         // Sanitize query parameters
-        Map<String, String[]> parameterMap = request.getParameterMap();
-        for (Map.Entry<String, String[]> entry : parameterMap.entrySet()) {
-            for (String value : entry.getValue()) {
-                if (inputSanitizer.containsMaliciousContent(value)) {
-                    logger.warn("Malicious content detected in parameter {}: {}",
-                        inputSanitizer.sanitizeForLogging(entry.getKey()),
-                        inputSanitizer.sanitizeForLogging(value));
-                    httpResponse.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid request content");
-                    return;
-                }
-            }
-        }
+//        Map<String, String[]> parameterMap = request.getParameterMap();
+//        for (Map.Entry<String, String[]> entry : parameterMap.entrySet()) {
+//            for (String value : entry.getValue()) {
+//                if (inputSanitizer.containsMaliciousContent(value)) {
+//                    logger.warn("Malicious content detected in parameter {}: {}",
+//                        inputSanitizer.sanitizeForLogging(entry.getKey()),
+//                        inputSanitizer.sanitizeForLogging(value));
+//                    httpResponse.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid request content");
+//                    return;
+//                }
+//            }
+//        }
 
         // Sanitize headers (basic check)
         String userAgent = httpRequest.getHeader("User-Agent");

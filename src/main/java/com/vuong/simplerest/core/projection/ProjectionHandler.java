@@ -9,7 +9,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.*;
-import java.sql.Time;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -25,6 +24,16 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ProjectionHandler {
     private static final Logger logger = LoggerFactory.getLogger(ProjectionHandler.class);
     private final Map<ProjectionKey, Object> projectionCache = new ConcurrentHashMap<>();
+
+    private final ObjectMapper jsonMapper = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .setSerializationInclusion(JsonInclude.Include.NON_NULL);
+
+    // Method name constants for better maintainability
+    private static final String GET_PREFIX = "get";
+    private static final String SET_PREFIX = "set";
+    private static final String GET_ID_METHOD = "getId";
+    private static final String SET_ID_METHOD = "setId";
 
     /**
      * Projects an entity to a map containing only the specified fields.
@@ -107,12 +116,12 @@ public class ProjectionHandler {
                 @SuppressWarnings("unchecked")
                 D cachedResult = (D) projectionCache.get(key);
                 if (cachedResult != null && !isProjectionChanged(entity, cachedResult, projectionClass, visited)) {
-                    logger.debug("Using cached projection for {}", entity.getClass().getName());
+                    logger.debug("Using cached projection for {}", getEntityClass(entity).getName());
                     return cachedResult;
                 }
             }
 
-            logger.debug("Starting projection from {} to {}", entity.getClass().getName(), projectionClass.getName());
+            logger.debug("Starting projection from {} to {}", getEntityClass(entity).getName(), projectionClass.getName());
 
             D result;
             if (projectionClass.isInterface()) {
@@ -129,13 +138,13 @@ public class ProjectionHandler {
 
             if (result == null) {
                 logger.warn("Failed to create projection for entity of type {} to projection type {}",
-                        entity.getClass().getName(), projectionClass.getName());
+                        getEntityClass(entity).getName(), projectionClass.getName());
             }
 
             return result;
         } catch (Exception e) {
             logger.error("Error projecting entity of type {} to projection type {}: {}",
-                    entity.getClass().getName(), projectionClass.getName(), e.getMessage(), e);
+                    getEntityClass(entity).getName(), projectionClass.getName(), e.getMessage(), e);
             throw new RuntimeException("Error projecting entity to " + projectionClass.getName(), e);
         } finally {
             // Remove from visited when done
@@ -151,66 +160,8 @@ public class ProjectionHandler {
         }
         visited.add(entity);
 
-        Map<String, Object> values = new HashMap<>();
-        boolean hasValues = false;
-
-        for (Method method : projectionClass.getMethods()) {
-            String methodName = method.getName();
-            if (!methodName.startsWith("get") || methodName.length() <= 3) {
-                continue;
-            }
-
-            // Safely convert method name to field name
-            String fieldName = methodName.substring(3);
-            fieldName = fieldName.substring(0, 1).toLowerCase() + fieldName.substring(1);
-
-            Object value = getFieldValue(entity, fieldName);
-            if (value != null) {
-                hasValues = true;
-                Class<?> returnType = method.getReturnType();
-
-                // Handle collection types
-                if (Collection.class.isAssignableFrom(returnType)) {
-                    if (value instanceof Collection<?> collection) {
-                        Collection<Object> projectedCollection;
-
-                        // Create the appropriate collection type
-                        if (returnType.isAssignableFrom(Set.class)) {
-                            projectedCollection = new HashSet<>();
-                        } else if (returnType.isAssignableFrom(List.class)) {
-                            projectedCollection = new ArrayList<>();
-                        } else {
-                            projectedCollection = new ArrayList<>();
-                        }
-
-                        // Get the element type from the method's generic return type
-                        Type genericReturnType = method.getGenericReturnType();
-                        if (genericReturnType instanceof ParameterizedType paramType) {
-                            Type[] typeArguments = paramType.getActualTypeArguments();
-                            if (typeArguments.length > 0) {
-                                Type elementType = typeArguments[0];
-                                if (elementType instanceof Class<?> elementClass) {
-                                    for (Object element : collection) {
-                                        if (element != null) {
-                                            Object projectedElement = project(element, elementClass, visited);
-                                            if (projectedElement != null) {
-                                                projectedCollection.add(projectedElement);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        value = projectedCollection;
-                    }
-                } else {
-                    value = projectValue(value, returnType, visited);
-                }
-
-                values.put(methodName, value);
-                logger.debug("Stored projected value for {}: {}", methodName, value);
-            }
-        }
+        Map<String, Object> values = collectInterfaceMethodValues(entity, projectionClass, visited);
+        boolean hasValues = !values.isEmpty();
 
         if (!hasValues) {
             logger.warn("No values found for entity of type {} when creating proxy for {}",
@@ -218,23 +169,7 @@ public class ProjectionHandler {
             return null;
         }
 
-        InvocationHandler handler = (proxy, method, args) -> {
-            String methodName = method.getName();
-            if (methodName.startsWith("get")) {
-                return values.get(methodName);
-            } else if (methodName.startsWith("set")) {
-                // Store the value for the corresponding getter
-                String getterName = "get" + methodName.substring(3);
-                values.put(getterName, args[0]);
-                return null;
-            }
-            return switch (methodName) {
-                case "toString" -> "Proxy for " + projectionClass.getName();
-                case "hashCode" -> System.identityHashCode(proxy);
-                case "equals" -> proxy == args[0];
-                default -> null;
-            };
-        };
+        InvocationHandler handler = createInvocationHandler(values, projectionClass);
 
         try {
             ClassLoader classLoader = projectionClass.getClassLoader();
@@ -255,6 +190,121 @@ public class ProjectionHandler {
             // Remove from visited set so this entity can be projected in other contexts
             visited.remove(entity);
         }
+    }
+
+    /**
+     * Collects method values for interface proxy creation.
+     * @param entity the entity to collect values from
+     * @param projectionClass the interface class
+     * @param visited set of already visited entities
+     * @return map of method names to their projected values
+     */
+    private <T> Map<String, Object> collectInterfaceMethodValues(T entity, Class<?> projectionClass, Set<Object> visited) {
+        Map<String, Object> values = new HashMap<>();
+
+        for (Method method : projectionClass.getMethods()) {
+            String methodName = method.getName();
+            if (!methodName.startsWith(GET_PREFIX) || methodName.length() <= 3) {
+                continue;
+            }
+
+            // Safely convert method name to field name
+            String fieldName = methodName.substring(3);
+            fieldName = fieldName.substring(0, 1).toLowerCase() + fieldName.substring(1);
+
+            Object value = getFieldValue(entity, fieldName);
+            if (value != null) {
+                Class<?> returnType = method.getReturnType();
+
+                // Handle collection types
+                if (Collection.class.isAssignableFrom(returnType)) {
+                    value = projectCollectionForInterface(value, returnType, method, visited);
+                } else if (isProjectionInterface(returnType)) {
+                    // Handle nested projection interfaces
+                    value = project(value, returnType, visited);
+                } else {
+                    value = projectValue(value, returnType, visited);
+                }
+
+                values.put(methodName, value);
+                logger.debug("Stored projected value for {}: {}", methodName, value);
+            }
+        }
+
+        return values;
+    }
+
+    /**
+     * Projects a collection for interface method return types.
+     */
+    private Object projectCollectionForInterface(Object value, Class<?> returnType, Method method, Set<Object> visited) {
+        if (!(value instanceof Collection<?> collection)) {
+            return value;
+        }
+
+        Collection<Object> projectedCollection = createCollectionInstance(returnType);
+
+        // Get the element type from the method's generic return type
+        Type genericReturnType = method.getGenericReturnType();
+        if (genericReturnType instanceof ParameterizedType paramType) {
+            Type[] typeArguments = paramType.getActualTypeArguments();
+            if (typeArguments.length > 0) {
+                Type elementType = typeArguments[0];
+                if (elementType instanceof Class<?> elementClass) {
+                    for (Object element : collection) {
+                        if (element != null) {
+                            Object projectedElement;
+                            // Handle nested projection interfaces in collections
+                            if (isProjectionInterface(elementClass)) {
+                                projectedElement = project(element, elementClass, visited);
+                            } else {
+                                projectedElement = project(element, elementClass, visited);
+                            }
+                            if (projectedElement != null) {
+                                projectedCollection.add(projectedElement);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return projectedCollection;
+    }
+
+    /**
+     * Creates an appropriate collection instance based on the return type.
+     */
+    private Collection<Object> createCollectionInstance(Class<?> returnType) {
+        if (returnType.isAssignableFrom(Set.class)) {
+            return new HashSet<>();
+        } else if (returnType.isAssignableFrom(List.class)) {
+            return new ArrayList<>();
+        } else {
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Creates the invocation handler for interface proxies.
+     */
+    private InvocationHandler createInvocationHandler(Map<String, Object> values, Class<?> projectionClass) {
+        return (proxy, method, args) -> {
+            String methodName = method.getName();
+            if (methodName.startsWith(GET_PREFIX)) {
+                return values.get(methodName);
+            } else if (methodName.startsWith(SET_PREFIX)) {
+                // Store the value for the corresponding getter
+                String getterName = GET_PREFIX + methodName.substring(3);
+                values.put(getterName, args[0]);
+                return null;
+            }
+            return switch (methodName) {
+                case "toString" -> "Proxy for " + projectionClass.getName();
+                case "hashCode" -> System.identityHashCode(proxy);
+                case "equals" -> proxy == args[0];
+                default -> null;
+            };
+        };
     }
 
     @SuppressWarnings("unchecked")
@@ -280,38 +330,12 @@ public class ProjectionHandler {
                 return (D) convertToType(value, projectionClass);
             }
 
-            // Try to create instance with no-args constructor first
-            try {
-                D instance = projectionClass.getDeclaredConstructor().newInstance();
+            // Try to create instance using constructor
+            D instance = createInstanceFromConstructor(entity, projectionClass, visited);
+            if (instance != null) {
                 populateInstance(instance, entity, visited);
-                return instance;
-            } catch (Exception e) {
-                // If no-args constructor fails, try to find a constructor with matching parameters
-                Constructor<?>[] constructors = projectionClass.getDeclaredConstructors();
-                for (Constructor<?> constructor : constructors) {
-                    try {
-                        Class<?>[] paramTypes = constructor.getParameterTypes();
-                        Object[] args = new Object[paramTypes.length];
-
-                        // Try to get values for constructor parameters
-                        for (int i = 0; i < paramTypes.length; i++) {
-                            String paramName = getParameterName(constructor, i);
-                            Object value = getFieldValue(entity, paramName);
-                            if (value != null) {
-                                args[i] = convertToType(value, paramTypes[i]);
-                            }
-                        }
-
-                        D instance = (D) constructor.newInstance(args);
-                        populateInstance(instance, entity, visited);
-                        return instance;
-                    } catch (Exception ex) {
-                        // Try next constructor
-                        continue;
-                    }
-                }
-                throw new RuntimeException("No suitable constructor found for " + projectionClass.getName());
             }
+            return instance;
         } catch (Exception e) {
             logger.error("Failed to create instance for {}: {}", projectionClass.getName(), e.getMessage());
             return null;
@@ -321,10 +345,73 @@ public class ProjectionHandler {
         }
     }
 
+    /**
+     * Creates an instance using constructor matching or no-args constructor.
+     */
+    private <T, D> D createInstanceFromConstructor(T entity, Class<D> projectionClass, Set<Object> visited) throws Exception {
+        // Try to create instance with no-args constructor first
+        try {
+            D instance = projectionClass.getDeclaredConstructor().newInstance();
+            populateInstanceFromConstructorArgs(instance, entity, projectionClass, visited);
+            return instance;
+        } catch (Exception e) {
+            // If no-args constructor fails, try to find a constructor with matching parameters
+            return createInstanceFromParameterizedConstructor(entity, projectionClass, visited);
+        }
+    }
+
+    /**
+     * Attempts to create instance using a parameterized constructor.
+     */
+    private <T, D> D createInstanceFromParameterizedConstructor(T entity, Class<D> projectionClass, Set<Object> visited) throws Exception {
+        Constructor<?>[] constructors = projectionClass.getDeclaredConstructors();
+        for (Constructor<?> constructor : constructors) {
+            try {
+                Class<?>[] paramTypes = constructor.getParameterTypes();
+                Object[] args = createConstructorArgs(entity, constructor, paramTypes);
+
+                @SuppressWarnings("unchecked")
+                D instance = (D) constructor.newInstance(args);
+                populateInstanceFromConstructorArgs(instance, entity, projectionClass, visited);
+                return instance;
+            } catch (Exception ex) {
+                // Try next constructor
+                continue;
+            }
+        }
+        throw new RuntimeException("No suitable constructor found for " + projectionClass.getName());
+    }
+
+    /**
+     * Creates constructor arguments by matching parameter names to entity fields.
+     */
+    private <T> Object[] createConstructorArgs(T entity, Constructor<?> constructor, Class<?>[] paramTypes) throws Exception {
+        Object[] args = new Object[paramTypes.length];
+
+        // Try to get values for constructor parameters
+        for (int i = 0; i < paramTypes.length; i++) {
+            String paramName = getParameterName(constructor, i);
+            Object value = getFieldValue(entity, paramName);
+            if (value != null) {
+                args[i] = convertToType(value, paramTypes[i]);
+            }
+        }
+
+        return args;
+    }
+
+    /**
+     * Populates instance with additional properties after constructor initialization.
+     */
+    private <T, D> void populateInstanceFromConstructorArgs(D instance, T entity, Class<D> projectionClass, Set<Object> visited) {
+        // Additional population logic can be added here if needed
+        // For now, this is handled by the main populateInstance method
+    }
+
     private <T, D> void populateInstance(D instance, T entity, Set<Object> visited) {
         for (Method method : instance.getClass().getMethods()) {
             String methodName = method.getName();
-            if (!methodName.startsWith("set") || methodName.length() <= 3) {
+            if (!methodName.startsWith(SET_PREFIX) || methodName.length() <= 3) {
                 continue;
             }
 
@@ -359,6 +446,94 @@ public class ProjectionHandler {
         return "arg" + index;
     }
 
+    /**
+     * Unwraps Hibernate proxy to get the actual entity class.
+     * This handles cases where JPA lazy-loading returns proxy objects.
+     */
+    private Object unwrapHibernateProxy(Object entity) {
+        if (entity == null) {
+            return null;
+        }
+        
+        Class<?> entityClass = entity.getClass();
+        String className = entityClass.getName();
+        
+        // Check if this is a Hibernate proxy
+        if (className.contains("$HibernateProxy") || 
+            className.contains("HibernateProxy") ||
+            entityClass.getName().contains("_$$_javassist") ||
+            entityClass.getName().contains("_$$_jvst")) {
+            
+            try {
+                // Try to get the actual entity using Hibernate's getLazyInitializer
+                Object lazyInitializer = entityClass.getMethod("getHibernateLazyInitializer").invoke(entity);
+                if (lazyInitializer != null) {
+                    Object persistentClass = lazyInitializer.getClass().getMethod("getPersistentClass").invoke(lazyInitializer);
+                    if (persistentClass instanceof Class) {
+                        logger.debug("Unwrapped Hibernate proxy: {} -> {}", className, ((Class<?>) persistentClass).getName());
+                    }
+                }
+            } catch (Exception e) {
+                logger.debug("Could not unwrap Hibernate proxy, using as-is: {}", className);
+            }
+        }
+        
+        return entity;
+    }
+
+    /**
+     * Gets the actual entity class, unwrapping proxies if necessary.
+     */
+    private Class<?> getEntityClass(Object entity) {
+        if (entity == null) {
+            return null;
+        }
+        
+        Class<?> entityClass = entity.getClass();
+        String className = entityClass.getName();
+        
+        // Check if this is a Hibernate proxy
+        if (className.contains("$HibernateProxy") || 
+            className.contains("HibernateProxy") ||
+            entityClass.getName().contains("_$$_javassist") ||
+            entityClass.getName().contains("_$$_jvst")) {
+            
+            try {
+                // Try to get the actual entity class using Hibernate's getLazyInitializer
+                Object lazyInitializer = entityClass.getMethod("getHibernateLazyInitializer").invoke(entity);
+                if (lazyInitializer != null) {
+                    Object persistentClass = lazyInitializer.getClass().getMethod("getPersistentClass").invoke(lazyInitializer);
+                    if (persistentClass instanceof Class) {
+                        Class<?> actualClass = (Class<?>) persistentClass;
+                        logger.debug("Unwrapped Hibernate proxy class: {} -> {}", className, actualClass.getName());
+                        return actualClass;
+                    }
+                }
+            } catch (Exception e) {
+                logger.debug("Could not unwrap Hibernate proxy class, using as-is: {}", className);
+            }
+        }
+        
+        return entityClass;
+    }
+
+    private boolean isProjectionInterface(Class<?> clazz) {
+        return clazz.isInterface() && 
+               (clazz.isAnnotationPresent(ProjectionDefinition.class) ||
+                hasGetterMethods(clazz));
+    }
+
+    private boolean hasGetterMethods(Class<?> clazz) {
+        for (Method method : clazz.getMethods()) {
+            if (method.getName().startsWith(GET_PREFIX) && 
+                method.getParameterCount() == 0 && 
+                !method.getName().equals("getClass")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private Object projectValue(Object value, Class<?> targetType, Set<Object> visited) {
         if (value == null) {
             return null;
@@ -369,6 +544,19 @@ public class ProjectionHandler {
             return convertToType(value, targetType);
         }
 
+        // Handle nested projection interfaces
+        if (isProjectionInterface(targetType)) {
+            return project(value, targetType, visited);
+        }
+
+        // Handle complex object projection with cycle detection
+        return projectComplexValue(value, targetType, visited);
+    }
+
+    /**
+     * Projects complex objects (non-primitives) with cycle detection.
+     */
+    private Object projectComplexValue(Object value, Class<?> targetType, Set<Object> visited) {
         // Get the entity identifier if possible (for JPA entities)
         Object entityId = getEntityId(value);
 
@@ -379,56 +567,76 @@ public class ProjectionHandler {
 
         // Check if we're already processing this entity
         if (visited.contains(entityKey)) {
-            logger.debug("Detected cycle in object graph for {}: {}",
-                    value.getClass().getName(), entityKey);
-
-            // For many-to-one and one-to-one relationships, return minimal ID reference
-            if (entityId != null && !Collection.class.isAssignableFrom(value.getClass())) {
-                return createMinimalEntityReference(value, targetType, entityId);
-            }
-
-            return null;
+            logger.debug("Detected cycle in object graph for {}: {}", value.getClass().getName(), entityKey);
+            return handleCyclicReference(value, targetType, entityId);
         }
 
         // Add to visited before processing
         visited.add(entityKey);
 
         try {
-            // Handle collections
-            if (value instanceof Collection) {
-                return projectCollection((Collection<?>) value, targetType, visited);
-            } else if (Collection.class.isAssignableFrom(targetType)) {
-                return projectCollection((Collection<?>) value, targetType, visited);
-            }
-            // Handle interface projections
-            else if (targetType.isInterface()) {
-                return project(value, targetType, visited);
-            }
-            // Handle other types
-            else {
-                try {
-                    return project(value, targetType, visited);
-                } catch (Exception e) {
-                    try {
-                        return targetType.cast(value);
-                    } catch (ClassCastException ex) {
-                        try {
-                            Object newInstance = targetType.getDeclaredConstructor().newInstance();
-                            copyProperties(value, newInstance, visited);
-                            return newInstance;
-                        } catch (Exception exc) {
-                            logger.warn("Failed to handle value: {}", exc.getMessage());
-                            return null;
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            logger.warn("Failed to project value: {}", e.getMessage());
-            return null;
+            return performProjection(value, targetType, visited);
         } finally {
             // Remove from visited set after processing
             visited.remove(entityKey);
+        }
+    }
+
+    /**
+     * Handles cyclic references by creating minimal references or returning null.
+     */
+    private Object handleCyclicReference(Object value, Class<?> targetType, Object entityId) {
+        // For many-to-one and one-to-one relationships, return minimal ID reference
+        if (entityId != null && !Collection.class.isAssignableFrom(value.getClass())) {
+            return createMinimalEntityReference(value, targetType, entityId);
+        }
+        return null;
+    }
+
+    /**
+     * Performs the actual projection based on the target type.
+     */
+    private Object performProjection(Object value, Class<?> targetType, Set<Object> visited) {
+        // Handle collections
+        if (value instanceof Collection<?> || Collection.class.isAssignableFrom(targetType)) {
+            return projectCollection((Collection<?>) value, targetType, visited);
+        }
+        // Handle interface projections
+        else if (isProjectionInterface(targetType)) {
+            return project(value, targetType, visited);
+        }
+        // Handle other types
+        else {
+            return projectToConcreteClass(value, targetType, visited);
+        }
+    }
+
+    /**
+     * Projects value to a concrete class, with fallback mechanisms.
+     */
+    private Object projectToConcreteClass(Object value, Class<?> targetType, Set<Object> visited) {
+        try {
+            return project(value, targetType, visited);
+        } catch (Exception e) {
+            try {
+                return targetType.cast(value);
+            } catch (ClassCastException ex) {
+                return createInstanceWithPropertyCopy(value, targetType, visited);
+            }
+        }
+    }
+
+    /**
+     * Creates a new instance and copies properties when direct projection fails.
+     */
+    private Object createInstanceWithPropertyCopy(Object value, Class<?> targetType, Set<Object> visited) {
+        try {
+            Object newInstance = targetType.getDeclaredConstructor().newInstance();
+            copyProperties(value, newInstance, visited);
+            return newInstance;
+        } catch (Exception exc) {
+            logger.warn("Failed to handle value: {}", exc.getMessage());
+            return null;
         }
     }
 
@@ -440,16 +648,17 @@ public class ProjectionHandler {
             return null;
         }
 
+        Class<?> actualClass = getEntityClass(entity);
         try {
             // Try to get ID from getId() method commonly found in JPA entities
-            Method idGetter = findMethodInClassHierarchy(entity.getClass(), "getId");
+            Method idGetter = findMethodInClassHierarchy(actualClass, GET_ID_METHOD);
             if (idGetter != null) {
                 idGetter.setAccessible(true);
                 return idGetter.invoke(entity);
             }
 
             // Try to find a field with @Id annotation
-            for (Field field : entity.getClass().getDeclaredFields()) {
+            for (Field field : actualClass.getDeclaredFields()) {
                 if (field.isAnnotationPresent(jakarta.persistence.Id.class)) {
                     field.setAccessible(true);
                     return field.get(entity);
@@ -471,7 +680,7 @@ public class ProjectionHandler {
             if (targetType.isInterface()) {
                 InvocationHandler handler = (proxy, method, args) -> {
                     String methodName = method.getName();
-                    if (methodName.equals("getId")) {
+                    if (methodName.equals(GET_ID_METHOD)) {
                         return entityId;
                     } else if (methodName.equals("toString")) {
                         return "Reference to " + entity.getClass().getSimpleName() + " with ID " + entityId;
@@ -494,7 +703,7 @@ public class ProjectionHandler {
             else {
                 try {
                     Object instance = targetType.getDeclaredConstructor().newInstance();
-                    Method setId = findMethodInClassHierarchy(targetType, "setId");
+                    Method setId = findMethodInClassHierarchy(targetType, SET_ID_METHOD);
                     if (setId != null) {
                         setId.invoke(instance, entityId);
                     }
@@ -581,6 +790,7 @@ public class ProjectionHandler {
 
     private boolean isPrimitiveOrWrapper(Class<?> type) {
         return type.isPrimitive() ||
+                type.isEnum() ||
                 type == Boolean.class ||
                 type == Byte.class ||
                 type == Character.class ||
@@ -593,7 +803,6 @@ public class ProjectionHandler {
                 type == LocalDate.class ||
                 type == LocalTime.class ||
                 type == Date.class ||
-                type == Time.class ||
                 type == Instant.class;
     }
 
@@ -661,83 +870,86 @@ public class ProjectionHandler {
 
         // Handle empty collections quickly
         if (collection.isEmpty()) {
-            if (targetType.isAssignableFrom(Set.class)) {
-                return new HashSet<>();
-            } else {
-                return new ArrayList<>();
-            }
+            return createEmptyCollection(targetType);
         }
 
         // Convert Hibernate collections to standard Java collections to avoid LazyInitializationException
-        Collection<T> standardCollection = collection.getClass().getName().contains("org.hibernate.collection")
-                ? new ArrayList<>(collection)
-                : collection;
+        Collection<T> standardCollection = convertToStandardCollection(collection);
 
         Class<?> elementType = getCollectionElementType(targetType);
         if (elementType == null || elementType == Object.class) {
             // Create the appropriate collection type based on target type without projection
-            if (targetType.isAssignableFrom(Set.class)) {
-                return new HashSet<>(standardCollection);
-            } else if (targetType.isAssignableFrom(List.class)) {
-                return new ArrayList<>(standardCollection);
-            } else {
-                return standardCollection;
-            }
+            return createUnprojectedCollection(standardCollection, targetType);
         }
 
         // For primitive element types, do a simple conversion
         if (isPrimitiveOrWrapper(elementType)) {
-            Collection<Object> simpleCollection;
-            if (targetType.isAssignableFrom(Set.class)) {
-                simpleCollection = new HashSet<>();
-            } else {
-                simpleCollection = new ArrayList<>();
-            }
-
-            for (T item : standardCollection) {
-                if (item != null) {
-                    simpleCollection.add(convertToType(item, elementType));
-                }
-            }
-
-            return simpleCollection;
+            return projectPrimitiveElementCollection(standardCollection, targetType, elementType);
         }
 
-        try {
-            Collection<Object> resultCollection;
-            if (targetType.isAssignableFrom(Set.class)) {
-                resultCollection = new HashSet<>();
-            } else if (targetType.isAssignableFrom(List.class)) {
-                resultCollection = new ArrayList<>();
-            } else {
-                resultCollection = new ArrayList<>();
-            }
+        // Project complex element types
+        return projectComplexElementCollection(standardCollection, targetType, elementType, visited);
+    }
 
-            // Create a copy of visited for this collection iteration
-            // to prevent cycles within the collection
+    /**
+     * Creates an empty collection of the appropriate type.
+     */
+    private Object createEmptyCollection(Class<?> targetType) {
+        if (targetType.isAssignableFrom(Set.class)) {
+            return new HashSet<>();
+        } else {
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Converts Hibernate collections to standard Java collections.
+     */
+    private <T> Collection<T> convertToStandardCollection(Collection<T> collection) {
+        return collection.getClass().getName().contains("org.hibernate.collection")
+                ? new ArrayList<>(collection)
+                : collection;
+    }
+
+    /**
+     * Creates a collection without projecting elements (for Object element types).
+     */
+    private <T> Object createUnprojectedCollection(Collection<T> collection, Class<?> targetType) {
+        if (targetType.isAssignableFrom(Set.class)) {
+            return new HashSet<>(collection);
+        } else if (targetType.isAssignableFrom(List.class)) {
+            return new ArrayList<>(collection);
+        } else {
+            return collection;
+        }
+    }
+
+    /**
+     * Projects collections with primitive element types.
+     */
+    private <T> Object projectPrimitiveElementCollection(Collection<T> collection, Class<?> targetType, Class<?> elementType) {
+        Collection<Object> resultCollection = createCollectionForType(targetType);
+
+        for (T item : collection) {
+            if (item != null) {
+                resultCollection.add(convertToType(item, elementType));
+            }
+        }
+
+        return resultCollection;
+    }
+
+    /**
+     * Projects collections with complex element types.
+     */
+    private <T> Object projectComplexElementCollection(Collection<T> collection, Class<?> targetType, Class<?> elementType, Set<Object> visited) {
+        try {
+            Collection<Object> resultCollection = createCollectionForType(targetType);
             Set<String> processedKeys = new HashSet<>();
 
-            for (T item : standardCollection) {
+            for (T item : collection) {
                 if (item != null) {
-                    // Get the element ID if available for better cycle detection
-                    Object itemId = getEntityId(item);
-                    String itemKey = itemId != null ?
-                            item.getClass().getName() + "-" + itemId :
-                            String.valueOf(System.identityHashCode(item));
-
-                    // Skip duplicates in the same collection
-                    if (processedKeys.contains(itemKey)) {
-                        continue;
-                    }
-
-                    processedKeys.add(itemKey);
-
-                    // Project the item
-                    // We use a new copy of visited here to prevent "horizontal" cycles
-                    // (different items in the same collection), but preserve "vertical" cycle detection
-                    Set<Object> itemVisited = new HashSet<>(visited);
-                    Object projectedItem = projectValue(item, elementType, itemVisited);
-
+                    Object projectedItem = projectCollectionItem(item, elementType, processedKeys, visited);
                     if (projectedItem != null) {
                         resultCollection.add(projectedItem);
                     }
@@ -747,14 +959,55 @@ public class ProjectionHandler {
             return resultCollection;
         } catch (Exception e) {
             logger.error("Failed to project collection: {}", e.getMessage(), e);
-            // Fallback to appropriate collection type
-            if (targetType.isAssignableFrom(Set.class)) {
-                return new HashSet<>(standardCollection);
-            } else if (targetType.isAssignableFrom(List.class)) {
-                return new ArrayList<>(standardCollection);
-            } else {
-                return standardCollection;
-            }
+            return createFallbackCollection(collection, targetType);
+        }
+    }
+
+    /**
+     * Creates a collection instance based on the target type.
+     */
+    private Collection<Object> createCollectionForType(Class<?> targetType) {
+        if (targetType.isAssignableFrom(Set.class)) {
+            return new HashSet<>();
+        } else if (targetType.isAssignableFrom(List.class)) {
+            return new ArrayList<>();
+        } else {
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Projects a single collection item with cycle detection.
+     */
+    private <T> Object projectCollectionItem(T item, Class<?> elementType, Set<String> processedKeys, Set<Object> visited) {
+        // Get the element ID if available for better cycle detection
+        Object itemId = getEntityId(item);
+        String itemKey = itemId != null ?
+                item.getClass().getName() + "-" + itemId :
+                String.valueOf(System.identityHashCode(item));
+
+        // Skip duplicates in the same collection
+        if (processedKeys.contains(itemKey)) {
+            return null;
+        }
+
+        processedKeys.add(itemKey);
+
+        // Project the item with a new visited set to prevent "horizontal" cycles
+        Set<Object> itemVisited = new HashSet<>(visited);
+        return projectValue(item, elementType, itemVisited);
+    }
+
+    /**
+     * Creates a fallback collection when projection fails.
+     */
+    private <T> Object createFallbackCollection(Collection<T> collection, Class<?> targetType) {
+        if (targetType.isAssignableFrom(Set.class)) {
+            return new HashSet<>(collection);
+        } else if (targetType.isAssignableFrom(List.class)) {
+            return new ArrayList<>(collection);
+        } else {
+            return collection;
         }
     }
 
@@ -767,63 +1020,83 @@ public class ProjectionHandler {
         if (visited.contains(source)) {
             return;
         }
-
         // Mark as visited
         visited.add(source);
 
         try {
-            // Copy properties using getter/setter pattern
-            for (Method getter : source.getClass().getMethods()) {
-                if (getter.getName().startsWith("get") &&
-                        !getter.getName().equals("getClass") &&
-                        getter.getParameterCount() == 0) {
-
-                    String setterName = "set" + getter.getName().substring(3);
-                    try {
-                        // Find matching setter
-                        Method setter = target.getClass().getMethod(setterName, getter.getReturnType());
-                        Object value = getter.invoke(source);
-
-                        if (value != null) {
-                            // Handle cyclic references in property values
-                            if (visited.contains(value)) {
-                                continue;
-                            }
-
-                            // For collection types, we should project each element
-                            if (value instanceof Collection<?>) {
-                                // Project collection with cycle detection
-                                Object projectedCollection = projectCollection(
-                                        (Collection<?>) value,
-                                        getter.getReturnType(),
-                                        visited
-                                );
-                                setter.invoke(target, projectedCollection);
-                            }
-                            // For complex objects, we might need to project them
-                            else if (!isPrimitiveOrWrapper(value.getClass())) {
-                                Object projected = projectValue(value, getter.getReturnType(), visited);
-                                if (projected != null) {
-                                    setter.invoke(target, projected);
-                                }
-                            }
-                            // For primitive types, copy directly
-                            else {
-                                setter.invoke(target, value);
-                            }
-                        }
-                    } catch (Exception e) {
-                        // Skip if setter doesn't exist or types don't match
-                        logger.trace("Failed to copy property {}: {}", getter.getName(), e.getMessage());
-                        continue;
-                    }
-                }
-            }
+            copyPropertiesInternal(source, target, visited);
         } catch (Exception e) {
             logger.warn("Failed to copy properties: {}", e.getMessage());
         } finally {
             // Remove from visited when done
             visited.remove(source);
+        }
+    }
+
+    /**
+     * Internal method to copy properties using getter/setter pattern.
+     */
+    private void copyPropertiesInternal(Object source, Object target, Set<Object> visited) {
+        for (Method getter : source.getClass().getMethods()) {
+            if (isValidGetter(getter)) {
+                copyProperty(getter, source, target, visited);
+            }
+        }
+    }
+
+    /**
+     * Checks if a method is a valid getter for property copying.
+     */
+    private boolean isValidGetter(Method getter) {
+        String methodName = getter.getName();
+        return methodName.startsWith(GET_PREFIX) &&
+                !methodName.equals("getClass") &&
+                getter.getParameterCount() == 0;
+    }
+
+    /**
+     * Copies a single property from source to target.
+     */
+    private void copyProperty(Method getter, Object source, Object target, Set<Object> visited) {
+        String setterName = SET_PREFIX + getter.getName().substring(3);
+        try {
+            // Find matching setter
+            Method setter = target.getClass().getMethod(setterName, getter.getReturnType());
+            Object value = getter.invoke(source);
+
+            if (value != null) {
+                // Handle cyclic references in property values
+                if (visited.contains(value)) {
+                    return;
+                }
+
+                copyPropertyValue(value, setter, target, visited);
+            }
+        } catch (Exception e) {
+            // Skip if setter doesn't exist or types don't match
+            logger.trace("Failed to copy property {}: {}", getter.getName(), e.getMessage());
+        }
+    }
+
+    /**
+     * Copies a property value, handling different types appropriately.
+     */
+    private void copyPropertyValue(Object value, Method setter, Object target, Set<Object> visited) throws Exception {
+        // For collection types, we should project each element
+        if (value instanceof Collection<?>) {
+            Object projectedCollection = projectCollection((Collection<?>) value, setter.getParameterTypes()[0], visited);
+            setter.invoke(target, projectedCollection);
+        }
+        // For complex objects, we might need to project them
+        else if (!isPrimitiveOrWrapper(value.getClass())) {
+            Object projected = projectValue(value, setter.getParameterTypes()[0], visited);
+            if (projected != null) {
+                setter.invoke(target, projected);
+            }
+        }
+        // For primitive types, copy directly
+        else {
+            setter.invoke(target, value);
         }
     }
 
@@ -834,7 +1107,7 @@ public class ProjectionHandler {
 
         try {
             // First try to get the value through a getter method
-            String getterName = "get" + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1);
+            String getterName = GET_PREFIX + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1);
             Method getter = findMethodInClassHierarchy(entity.getClass(), getterName);
             if (getter != null) {
                 getter.setAccessible(true);
@@ -896,9 +1169,6 @@ public class ProjectionHandler {
 
     private boolean isProjectionChanged(Object entity, Object cachedProjection, Class<?> projectionClass, Set<Object> visited) {
         try {
-            ObjectMapper mapper = new ObjectMapper();
-            mapper.registerModule(new JavaTimeModule()); // hỗ trợ Instant, LocalDateTime, etc.
-            mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
 
             // Dựng projection hiện tại từ entity
             Object currentProjection = projectionClass.isInterface()
@@ -906,8 +1176,8 @@ public class ProjectionHandler {
                     : createClassInstance(entity, projectionClass, visited);
 
             // So sánh JSON
-            String json1 = mapper.writeValueAsString(currentProjection);
-            String json2 = mapper.writeValueAsString(cachedProjection);
+            String json1 = jsonMapper.writeValueAsString(currentProjection);
+            String json2 = jsonMapper.writeValueAsString(cachedProjection);
 
             return !json1.equals(json2); // nếu khác => cần cập nhật cache
         } catch (JsonProcessingException e) {
@@ -946,7 +1216,7 @@ public class ProjectionHandler {
         private Method getIdGetter(Class<?> clazz) {
             try {
                 // Try standard getId method
-                return clazz.getMethod("getId");
+                return clazz.getMethod(GET_ID_METHOD);
             } catch (NoSuchMethodException e) {
                 // Try to find any method or field marked with @Id
                 for (Method method : clazz.getMethods()) {

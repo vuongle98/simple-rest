@@ -1,9 +1,10 @@
 package com.vuong.simplerest.core.projection;
 
+import com.vuong.simplerest.config.SimpleRestProperties;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.core.type.classreading.MetadataReader;
@@ -20,25 +21,45 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Registry for managing projection interfaces annotated with @ProjectionDefinition.
- * Scans specified base packages to discover and register projections for entity types.
+ * Registry for managing projection interfaces annotated
+ * with @ProjectionDefinition.
+ * Scans specified base packages to discover and register projections for entity
+ * types.
  * Provides methods to query available projections and their mappings.
+ * Enhanced with caching for better runtime performance.
  */
 @Component
 public class ProjectionRegistry {
     private static final Logger logger = LoggerFactory.getLogger(ProjectionRegistry.class);
     private static final String CLASS_PATH_PATTERN = "classpath*:%s/**/*.class";
+
     private final Map<String, Class<?>> projectionMap = new ConcurrentHashMap<>();
     private final Map<Class<?>, Class<?>> entityProjectionMap = new ConcurrentHashMap<>();
+    // Cache for projection methods to avoid repeated reflection lookups
+    private final Map<String, Map<String, Method>> projectionMethodsCache = new ConcurrentHashMap<>();
+
     private final PathMatchingResourcePatternResolver resourceResolver;
     private final MetadataReaderFactory metadataReaderFactory;
-    @Value("${app.base-packages:com.vuog.core.module}")
-    private String[] basePackages;
+    private final SimpleRestProperties simpleRestProperties;
 
     /**
-     * Constructs a new ProjectionRegistry with default resource resolver and metadata reader factory.
+     * Constructs a new ProjectionRegistry with the given configuration properties.
+     * 
+     * @param simpleRestProperties the configuration properties containing base
+     *                             packages for scanning
+     */
+    @Autowired
+    public ProjectionRegistry(SimpleRestProperties simpleRestProperties) {
+        this.simpleRestProperties = simpleRestProperties;
+        this.resourceResolver = new PathMatchingResourcePatternResolver();
+        this.metadataReaderFactory = new SimpleMetadataReaderFactory();
+    }
+
+    /**
+     * Default constructor for backward compatibility.
      */
     public ProjectionRegistry() {
+        this.simpleRestProperties = null;
         this.resourceResolver = new PathMatchingResourcePatternResolver();
         this.metadataReaderFactory = new SimpleMetadataReaderFactory();
     }
@@ -49,17 +70,26 @@ public class ProjectionRegistry {
      */
     @PostConstruct
     public void init() {
-        logger.info("Initializing ProjectionRegistry with base packages: {}", Arrays.toString(basePackages));
+        String[] packages = simpleRestProperties != null ? simpleRestProperties.getBasePackages()
+                : new String[] { "com.vuong.core.module" };
+        logger.info("Initializing ProjectionRegistry with base packages: {}", Arrays.toString(packages));
         initialize();
         logRegistryState();
     }
 
     /**
-     * Manually initializes or reinitializes the projection registry by scanning for projection interfaces.
+     * Manually initializes or reinitializes the projection registry by scanning for
+     * projection interfaces.
      */
     public void initialize() {
         try {
-            for (String basePackage : basePackages) {
+            projectionMap.clear();
+            entityProjectionMap.clear();
+            projectionMethodsCache.clear();
+
+            String[] packages = simpleRestProperties != null ? simpleRestProperties.getBasePackages()
+                    : new String[] { "com.vuong.core.module" };
+            for (String basePackage : packages) {
                 scanForProjectionInterfaces(basePackage);
             }
         } catch (Exception e) {
@@ -109,8 +139,10 @@ public class ProjectionRegistry {
     }
 
     private boolean isInTargetPackages(String className) {
-        return Arrays.stream(basePackages)
-                .anyMatch(basePackage -> className.startsWith(basePackage));
+        String[] packages = simpleRestProperties != null ? simpleRestProperties.getBasePackages()
+                : new String[] { "com.vuong.core.module" };
+        return Arrays.stream(packages)
+                .anyMatch(className::startsWith);
     }
 
     private Class<?> loadClass(String className) {
@@ -143,7 +175,20 @@ public class ProjectionRegistry {
             entityProjectionMap.put(entityType, projectionClass);
         }
 
+        // Pre-cache methods for this projection
+        cacheProjectionMethods(name, projectionClass);
+
         logger.info("Registered projection: {} -> {}", name, projectionClass.getName());
+    }
+
+    private void cacheProjectionMethods(String name, Class<?> projectionClass) {
+        Map<String, Method> methods = new ConcurrentHashMap<>();
+        for (Method method : projectionClass.getMethods()) {
+            if (method.getParameterCount() == 0 && method.getName().startsWith("get")) {
+                methods.put(method.getName(), method);
+            }
+        }
+        projectionMethodsCache.put(name, methods);
     }
 
     private void logRegistryState() {
@@ -152,16 +197,16 @@ public class ProjectionRegistry {
         logger.info("Total entity-projection mappings: {}", entityProjectionMap.size());
 
         if (logger.isDebugEnabled()) {
-            projectionMap.forEach((name, clazz) ->
-                    logger.debug("Projection: {} -> {}", name, clazz.getName()));
+            projectionMap.forEach((name, clazz) -> logger.debug("Projection: {} -> {}", name, clazz.getName()));
 
-            entityProjectionMap.forEach((entity, projection) ->
-                    logger.debug("Entity-Projection mapping: {} -> {}", entity.getName(), projection.getName()));
+            entityProjectionMap.forEach((entity, projection) -> logger.debug("Entity-Projection mapping: {} -> {}",
+                    entity.getName(), projection.getName()));
         }
     }
 
     /**
      * Checks if a projection with the given name exists.
+     * 
      * @param projectionName the name of the projection
      * @return true if the projection exists, false otherwise
      */
@@ -171,6 +216,7 @@ public class ProjectionRegistry {
 
     /**
      * Retrieves the projection class for the given projection name.
+     * 
      * @param projectionName the name of the projection
      * @return the projection class, or null if not found
      */
@@ -184,6 +230,7 @@ public class ProjectionRegistry {
 
     /**
      * Checks if there is a registered projection for the given entity type.
+     * 
      * @param entityType the entity class
      * @return true if a projection exists for the entity, false otherwise
      */
@@ -193,6 +240,7 @@ public class ProjectionRegistry {
 
     /**
      * Retrieves the projection class for the given entity type.
+     * 
      * @param entityType the entity class
      * @return the projection class, or null if not found
      */
@@ -206,26 +254,35 @@ public class ProjectionRegistry {
 
     /**
      * Retrieves a map of getter methods for the given projection name.
+     * Uses cached methods if available.
+     * 
      * @param projectionName the name of the projection
-     * @return a map of method names to Method objects, or null if projection not found
+     * @return a map of method names to Method objects, or null if projection not
+     *         found
      */
     public Map<String, Method> getProjectionMethods(String projectionName) {
-        Class<?> projectionClass = getProjectionClass(projectionName);
-        if (projectionClass == null) {
+        if (!projectionMap.containsKey(projectionName)) {
             return null;
         }
 
-        Map<String, Method> methods = new ConcurrentHashMap<>();
-        for (Method method : projectionClass.getMethods()) {
-            if (method.getParameterCount() == 0 && method.getName().startsWith("get")) {
-                methods.put(method.getName(), method);
+        return projectionMethodsCache.computeIfAbsent(projectionName, k -> {
+            Class<?> projectionClass = projectionMap.get(projectionName);
+            if (projectionClass == null)
+                return new ConcurrentHashMap<>();
+
+            Map<String, Method> methods = new ConcurrentHashMap<>();
+            for (Method method : projectionClass.getMethods()) {
+                if (method.getParameterCount() == 0 && method.getName().startsWith("get")) {
+                    methods.put(method.getName(), method);
+                }
             }
-        }
-        return methods;
+            return methods;
+        });
     }
 
     /**
      * Returns the set of all available projection names.
+     * 
      * @return set of projection names
      */
     public Set<String> getAvailableProjections() {
@@ -234,6 +291,7 @@ public class ProjectionRegistry {
 
     /**
      * Returns the set of all entity types that have registered projections.
+     * 
      * @return set of entity classes
      */
     public Set<Class<?>> getAvailableEntityTypes() {

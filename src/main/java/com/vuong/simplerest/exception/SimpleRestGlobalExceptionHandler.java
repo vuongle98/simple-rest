@@ -15,9 +15,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * Handles EntityNotFoundException and IllegalArgumentException by returning appropriate HTTP error responses.
  */
 @RestControllerAdvice
-@Component("simpleRestGlobalExceptionHandler")
-@ConditionalOnMissingBean(GlobalExceptionHandler.class)
-public class GlobalExceptionHandler {
+@Component
+@ConditionalOnMissingBean(SimpleRestGlobalExceptionHandler.class)
+public class SimpleRestGlobalExceptionHandler {
 
     /**
      * Handles EntityNotFoundException and returns a 404 Not Found response.
@@ -49,5 +49,16 @@ public class GlobalExceptionHandler {
             null
         );
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(UserNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleUserNotFound(UserNotFoundException ex) {
+        ErrorResponse errorResponse = new ErrorResponse(
+                HttpStatus.NOT_FOUND.value(),
+                HttpStatus.NOT_FOUND.getReasonPhrase(),
+                ex.getMessage(),
+                null
+        );
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
     }
 }

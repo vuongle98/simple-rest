@@ -29,6 +29,8 @@ dependencies {
     api 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.5'
     api 'org.springframework.boot:spring-boot-starter-cache'
     api 'org.springframework.boot:spring-boot-starter-actuator'
+    api 'org.springframework.boot:spring-boot-starter-security'
+    api 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
 
     api 'org.springframework.boot:spring-boot-autoconfigure'
 
