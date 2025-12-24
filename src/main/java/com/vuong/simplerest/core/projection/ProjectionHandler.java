@@ -2,6 +2,7 @@ package com.vuong.simplerest.core.projection;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
@@ -219,8 +220,11 @@ public class ProjectionHandler {
                 // Handle collection types
                 if (Collection.class.isAssignableFrom(returnType)) {
                     value = projectCollectionForInterface(value, returnType, method, visited);
+                } else if (Map.class.isAssignableFrom(returnType)) {
+                    value = projectToTypedMap(value, method.getGenericReturnType(), visited);
+                } else if (returnType == Object.class) {
+                    value = projectToGenericObject(value, visited);
                 } else if (isProjectionInterface(returnType)) {
-                    // Handle nested projection interfaces
                     value = project(value, returnType, visited);
                 } else {
                     value = projectValue(value, returnType, visited);
@@ -422,7 +426,18 @@ public class ProjectionHandler {
             Object value = getFieldValue(entity, fieldName);
             if (value != null) {
                 try {
-                    value = projectValue(value, method.getParameterTypes()[0], visited);
+//                    value = projectValue(value, method.getParameterTypes()[0], visited);
+                    Type genericParam = method.getGenericParameterTypes()[0];
+                    Class<?> paramType = method.getParameterTypes()[0];
+
+                    if (Map.class.isAssignableFrom(paramType)) {
+                        value = projectToTypedMap(value, genericParam, visited);
+                    } else if (paramType == Object.class) {
+                        value = projectToGenericObject(value, visited);
+                    } else {
+                        value = projectValue(value, paramType, visited);
+                    }
+
                     method.invoke(instance, value);
                 } catch (Exception e) {
                     logger.warn("Failed to set value for field {}: {}", fieldName, e.getMessage());
@@ -537,6 +552,10 @@ public class ProjectionHandler {
     private Object projectValue(Object value, Class<?> targetType, Set<Object> visited) {
         if (value == null) {
             return null;
+        }
+
+        if (JsonNode.class.isAssignableFrom(targetType)) {
+            return toJsonNode(value);
         }
 
         // First handle primitive types immediately - they can't have cycles
@@ -722,6 +741,15 @@ public class ProjectionHandler {
     private Object convertToType(Object value, Class<?> targetType) {
         if (value == null) {
             return null;
+        }
+
+        if (value instanceof JsonNode node) {
+            try {
+                return jsonMapper.convertValue(node, targetType);
+            } catch (Exception ex) {
+                if (targetType == String.class) return node.asText();
+                return null;
+            }
         }
 
         try {
@@ -1248,6 +1276,113 @@ public class ProjectionHandler {
         @Override
         public int hashCode() {
             return Objects.hash(entityId, entityClass, projectionClass);
+        }
+    }
+
+    private JsonNode toJsonNode(Object value) {
+        if (value == null) return null;
+
+        if (value instanceof JsonNode node) return node;
+
+        if (value instanceof String s) {
+            String t = s.trim();
+            if (!t.isEmpty() && (t.startsWith("{") || t.startsWith("["))) {
+                try {
+                    return jsonMapper.readTree(t);
+                } catch (Exception ignored) {
+                    // fall through
+                }
+            }
+        }
+
+        // Map/List/POJO -> JsonNode
+        return jsonMapper.valueToTree(value);
+    }
+
+    private Object projectToGenericObject(Object value, Set<Object> visited) {
+        if (value == null) return null;
+
+        // ✅ JsonNode -> plain Java
+        if (value instanceof JsonNode node) {
+            return jsonMapper.convertValue(node, Object.class);
+        }
+
+        // JSON string -> parse
+        if (value instanceof String s) {
+            Object parsed = tryParseJson(s);
+            if (parsed != null) value = parsed;
+        }
+
+        if (value instanceof Map<?, ?> m) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                out.put(String.valueOf(e.getKey()), projectToGenericObject(e.getValue(), visited));
+            }
+            return out;
+        }
+
+        if (value instanceof Collection<?> col) {
+            List<Object> out = new ArrayList<>(col.size());
+            for (Object item : col) out.add(projectToGenericObject(item, visited));
+            return out;
+        }
+
+        if (isPrimitiveOrWrapper(value.getClass())) return value;
+
+        // fallback: turn POJO into Map safely-ish
+        try {
+            return jsonMapper.convertValue(value, Object.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Object projectToTypedMap(Object value, Type genericType, Set<Object> visited) {
+        if (value == null) return null;
+
+        Object normalized = value;
+
+        // JSON string -> parse
+        if (normalized instanceof String s) {
+            Object parsed = tryParseJson(s);
+            if (parsed != null) normalized = parsed;
+        }
+
+        // ✅ JsonNode -> Object
+        if (normalized instanceof JsonNode node) {
+            normalized = jsonMapper.convertValue(node, Object.class);
+        }
+
+        // If it's already a map/list/primitive, still enforce target generic typing
+        try {
+            var javaType = jsonMapper.getTypeFactory().constructType(genericType);
+            Object typed = jsonMapper.convertValue(normalized, javaType);
+
+            // deep-normalize in case nested JsonNodes exist
+            return projectToGenericObject(typed, visited);
+        } catch (IllegalArgumentException ex) {
+            // fallback: generic object
+            Object obj = projectToGenericObject(normalized, visited);
+            if (obj instanceof Map<?, ?>) return obj;
+            // Map expected but got something else -> null to avoid wrong structure
+            return null;
+        }
+    }
+
+    private Object tryParseJson(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        if (t.isEmpty()) return null;
+
+        // only try parse if it looks like JSON
+        char c = t.charAt(0);
+        if (c != '{' && c != '[') return null;
+
+        try {
+            JsonNode node = jsonMapper.readTree(t);
+            return jsonMapper.convertValue(node, Object.class);
+        } catch (Exception e) {
+            return null;
         }
     }
 }

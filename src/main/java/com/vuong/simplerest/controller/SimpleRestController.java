@@ -1,5 +1,6 @@
 package com.vuong.simplerest.controller;
 
+import com.vuong.simplerest.config.AppConfig;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.config.EnableSpringDataWebSupport;
@@ -18,9 +19,13 @@ import java.util.Map;
  * REST controller for generic CRUD operations on JPA entities.
  * Handles GET, POST, PUT, DELETE requests for entities with support for projections,
  * filtering, pagination, and input validation/sanitization.
+ * 
+ * This controller provides a generic REST API for any JPA entity through the
+ * {@link SimpleRestService} layer, supporting dynamic projections and advanced
+ * filtering capabilities.
  */
 @RestController
-@RequestMapping("/api/{entity}")
+@RequestMapping("${app.api.prefix}/{entity}")
 @EnableSpringDataWebSupport(pageSerializationMode = EnableSpringDataWebSupport.PageSerializationMode.VIA_DTO)
 public class SimpleRestController<T, ID> {
 

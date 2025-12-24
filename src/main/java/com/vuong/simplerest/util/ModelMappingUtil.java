@@ -1,6 +1,7 @@
 package com.vuong.simplerest.util;
 
 import org.modelmapper.ModelMapper;
+import org.modelmapper.config.Configuration;
 import org.springframework.data.domain.Page;
 
 import java.util.Collection;
@@ -13,8 +14,24 @@ import java.util.stream.Collectors;
  * Provides methods for mapping single objects, collections, and pages.
  */
 public class ModelMappingUtil {
-    private static final ModelMapper modelMapper = new ModelMapper();
+    private static final ModelMapper modelMapper = createMapper();
 
+    private ModelMappingUtil() {
+        // prevent instantiation outside
+    }
+
+    private static ModelMapper createMapper() {
+        ModelMapper mapper = new ModelMapper();
+
+        mapper.getConfiguration()
+                .setFieldMatchingEnabled(true)
+                .setFieldAccessLevel(Configuration.AccessLevel.PRIVATE)
+                .setSkipNullEnabled(true)
+                .setAmbiguityIgnored(true)
+                .setPreferNestedProperties(false);
+
+        return mapper;
+    }
     /**
      * Maps an entity to the specified output class.
      * @param entity the entity to map
@@ -24,6 +41,9 @@ public class ModelMappingUtil {
      * @return the mapped object
      */
     public static <D, T> D map(T entity, Class<D> outClass) {
+        if (entity == null) {
+            return null;
+        }
         return modelMapper.map(entity, outClass);
     }
 
